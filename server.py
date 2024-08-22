@@ -4,14 +4,16 @@ import struct
 import threading
 import logging
 
+# initialize logger for debugging
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.StreamHandler(sys.stdout))
 logging.basicConfig(level=logging.ERROR)
 
-# registered users
+# registered users (username: password)
 users = {
     'andrej': '123',
     'ivona': '123',
+    'demijan': '123',
 }
 
 # logged in users
