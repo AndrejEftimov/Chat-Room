@@ -11,11 +11,15 @@ class User:
     username = None # Unique (PK)
     password = None
     socket = None
+    listening_socket = None
+    address = None
 
-    def __init__(self, username, password, socket=None):
+    def __init__(self, username, password, socket=None, listening_socket=None, address=None):
         self.username = username
         self.password = password
         self.socket = socket
+        self.listening_socket = listening_socket
+        self.address = address
 
     def toJSON(self):
         return {

@@ -35,7 +35,7 @@ class Server:
         self.lock = threading.Lock()
 
         self.server_socket.bind((self.host, self.port))
-        self.server_socket.listen(5)
+        self.server_socket.listen(10)
         print(f"Server started on {self.host}:{self.port}")
 
         self.run_server()
@@ -93,7 +93,7 @@ class Server:
                     continue
 
                 elif action == "LOGIN":
-                    username = self.login(client_socket, msg)
+                    username = self.login(client_socket, msg, addr)
                     if username:
                         self.on_login_success(username, client_socket)
                     elif username == None:
@@ -103,6 +103,11 @@ class Server:
                             self.clients.remove(client_socket)
                         client_socket.close()
                         break
+
+                elif action == "LISTEN":
+                    username = msg.split("|")[1]
+                    self.logged_in_users[username].listening_socket = client_socket
+
 
             except Exception as e:
                 self.logger.error(f"Exception in handle_client(): {e}")
@@ -213,9 +218,9 @@ class Server:
 
         for username in self.rooms[room_name].participants:
             if username in self.logged_in_users:
-                self.send_all(self.logged_in_users[username].socket, "UPDATE")
-                serialized_message = pickle.dumps(messageObj)
-                self.logged_in_users[username].socket.sendall(serialized_message)
+                self.send_all(self.logged_in_users[username].listening_socket, f"UPDATE|{room_name}|{author_username}|{message}")
+                # serialized_message = pickle.dumps(messageObj)
+                # self.logged_in_users[username].socket.sendall(serialized_message)
 
         return True
         
@@ -258,7 +263,7 @@ class Server:
             return False
 
 
-    def login(self, client_socket, msg):
+    def login(self, client_socket, msg, addr):
         try:
             msg = msg.split("|")
             username = msg[1]
@@ -274,7 +279,7 @@ class Server:
             if self.registered_users[username].password == password:
                 self.logger.debug("Location 2")
                 if username not in self.logged_in_users:
-                    self.logged_in_users[username] = User(username, password, client_socket)
+                    self.logged_in_users[username] = User(username, password, socket=client_socket, address=addr)
                     self.send_all(client_socket, "Login successful!\n")
                     self.logger.debug("Login successful!")
 
