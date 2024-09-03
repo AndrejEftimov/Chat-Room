@@ -89,13 +89,14 @@ class Server:
                 self.logger.debug(f"Client chose action: {action}")
                 
                 if action == "REGISTER":
-                    self.register(client_socket)
+                    self.register(client_socket, msg, addr)
                     continue
 
                 elif action == "LOGIN":
                     username = self.login(client_socket, msg, addr)
                     if username:
                         self.on_login_success(username, client_socket)
+                        break
                     elif username == None:
                         continue
                     else: # if username == False
@@ -151,15 +152,22 @@ class Server:
 
 
     def on_login_success(self, username, client_socket):
+        rooms = ''
+        for room_name, room in self.rooms.items():
+            if username in room.participants:
+                rooms += f"|{room_name}"
+        self.logger.debug(f"Sending rooms ({rooms}) to user...")
+        self.send_all(client_socket, rooms)
+
+        self.logger.debug("Entering while True...")
         while True:
             msg = self.receive(client_socket)
             self.logger.debug(f"Received msg from client: {msg}")
             msg = msg.split("|")
             action = msg[0]
+            self.logger.debug(f"Action chosen is {action}")
             if action == "SELECT_ROOM":
-                self.logger.debug("Action chosen is SELECT_ROOM")
                 room_name = msg[1]
-
                 if (username not in self.rooms[room_name].participants) and room_name != "Broadcast":
                     self.send_all(client_socket, "Access Denied!")
                     continue
@@ -169,7 +177,6 @@ class Server:
                 self.send_room_messages(client_socket, username, room_name)
 
             elif action == "SEND_MESSAGE":
-                self.logger.debug("Action chosen is SEND_MESSAGE")
                 room_name = msg[1]
                 message = msg[2]
                 self.logger.debug(f"Room name is '{room_name}', and message is '{message}'")
@@ -178,32 +185,33 @@ class Server:
                     self.logger.debug("Sending SUCCESSFULLY SENT MESSAGE to client...")
                     self.send_all(client_socket, "SUCCESSFULLY SENT MESSAGE!")
 
-        # while True:
-        #     self.logger.debug(f"Entered while loop...")
-        #     try:
-        #         message = self.receive(client_socket)
-        #         if message == "LOGOUT":
-        #             self.logout(username, client_socket)
-        #             return
-        #         elif "SELECT_ROOM" in message:
-        #             room_name = message.split("|")[1]
-        #             if room_name not in self.rooms:
-        #                 self.send_all(client_socket, "FAILED. No such Room.")
-        #                 continue
+            elif action == "LOGOUT":
+                self.logout(username, client_socket)
+                break
+            
+            elif action == "CREATE_ROOM":
+                self.create_room(username, client_socket)
 
-        #             if username not in self.rooms[room_name].participants:
-        #                 self.send_all(client_socket, "FAILED. Access Denied.")
-        #                 continue
 
-        #             self.send_all(client_socket, "SUCCESS. You joined this Room!")
+    def create_room(self, username, client_socket):
+        room_name = self.receive(client_socket)
+        self.logger.debug(f"Received room_name: {room_name} from client and now creating room...")
+        self.rooms[room_name] = Room(room_name)
 
-        #         else: # send a message
-        #             self.send_message(client_socket, room_name, message)
-                    
-        #     except Exception as e:
-        #         self.logger.error(f"Error receiving message: {e}")
-        #         self.logout(username, client_socket)
-        #         return
+        # self.logger.debug("Creating registered-users_str...")
+        # registered_users_str = ''
+        # for user in self.registered_users.keys():
+        #     registered_users_str += f'|{user}'
+        
+        # self.logger.debug(f"Sending registered_users_str {registered_users_str} to client...")
+        # self.send_all(client_socket, registered_users_str)
+        # msg = self.receive(client_socket).split("|")
+        # room_name = msg[0]
+        # users = msg[1].split("|")
+        # self.logger.debug(f"Received room_name: {room_name} and users: {users}")
+
+        # if room_name not in self.rooms:
+        #     self.rooms[room_name] = Room(room_name, users)
             
             
     def send_message_to_room(self, author_username, room_name, message):
@@ -231,35 +239,31 @@ class Server:
         return
 
 
-    def register(self, client_socket):
+    def register(self, client_socket, msg, addr):
         try:
-            length = struct.unpack("!i", self.recv_all(client_socket, 4))[0]
-            username = self.recv_all(client_socket, length).decode()
-            self.logger.debug(f"Client entered new username: {username}")
+            msg = msg.split("|")
+            username = msg[1]
+            password = msg[2]
+            self.logger.debug(f"Client entered new username: {username}, and new password: {password}")
 
-            length = struct.unpack("!i", self.recv_all(client_socket, 4))[0]
-            password = self.recv_all(client_socket, length).decode()
-            self.logger.debug(f"Client entered new password: {password}")
+            if ((not username) or (not password)):
+                self.logger.debug("Location 6")
+                self.send_all(client_socket, "Login failed.\n")
+                self.logger.debug("Login failed.")
+                return None
 
-            if username in self.registered_users:
-                msg = "Registration failed! Username already exists!\n"
-                fullmsg = struct.pack("!i", len(msg)) + msg.encode()
-                client_socket.sendall(fullmsg)
-                return False
-
-            self.registered_users[username] = password
-            msg = f"Registration successful! You can now login with username '{username}'.\n"
-            fullmsg = struct.pack("!i", len(msg)) + msg.encode()
-            client_socket.sendall(fullmsg)
-            print(f"New user registered: {username}")
-
-            return True
+            else:
+                self.logger.debug("Location 7")
+                if username not in self.registered_users:
+                    self.registered_users[username] = User(username, password, socket=client_socket, address=addr)
+                    self.send_all(client_socket, "Registration successful!\n")
+                    self.logger.debug("Registration successful!")
+                    return username
 
         except Exception as e:
-            # msg = f"Registration failed! Exception: {e}\n"
-            # fullmsg = struct.pack("!i", len(msg)) + msg.encode()
-            # client_socket.sendall(fullmsg)
-            self.logger.error(f"Exception: {e}")
+            self.send_all(client_socket, "Ran into exception server-side!")
+            self.logger.error(f"Ran into Exception: {e}")
+            self.logger.debug("Location 8")
             return False
 
 
@@ -330,6 +334,10 @@ class Server:
         with self.lock:
             self.logged_in_users.pop(username)
 
+        self.cleanup_client(client_socket)
+
+
+    def cleanup_client(self, client_socket):
         if client_socket in self.clients:
             self.clients.remove(client_socket)
         client_socket.close()
