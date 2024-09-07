@@ -17,72 +17,47 @@ class Server:
         #self.logger.addHandler(logging.StreamHandler(sys.stdout))
         logging.basicConfig(level=logging.DEBUG) # DEBUG or ERROR
 
-          # all rooms room_name: Room
-        self.rooms = {}
-        self.broadcast_room = Room("Broadcast") # for broadcasting to all logged in users
-        self.rooms[self.broadcast_room.name] = self.broadcast_room
+        self.lock = threading.Lock()
+
+        self.allocate_resources()
 
         self.host = host
         self.port = port
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.clients = []  # list to keep track of connected clients
-        # registered users username: User
-        self.registered_users = {
-            "andrej": User("andrej", "123", None),
-            "ivona": User("ivona", "123", None),
-        }
-        self.logged_in_users = {}  # dictionary to keep track of logged-in users, username: User
-        self.lock = threading.Lock()
-
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(10)
         print(f"Server started on {self.host}:{self.port}")
 
         self.run_server()
 
+
+    def allocate_resources(self):
+        self.rooms = {}
+        self.broadcast_room = Room("Broadcast") # for broadcasting to all logged in users
+        self.rooms[self.broadcast_room.name] = self.broadcast_room
+
+        self.clients = []  # list to keep track of connected clients
+        # registered users username: User
+        self.registered_users = {
+            "andrej": User("andrej", "123", None),
+            "ivona": User("ivona", "123", None),
+        }
+
+        self.logged_in_users = {}  # dictionary to keep track of logged-in users, username: User
+
+
     def run_server(self):
         while True:
             client_socket, addr = self.server_socket.accept()
             print(f"Client connected: {addr}")
             self.clients.append(client_socket)
-            client_thread = threading.Thread(target=self.handle_client, args=(client_socket, addr))
+            client_thread = threading.Thread(target=self.handle_auth, args=(client_socket, addr))
             client_thread.start()
 
 
-    # FOR SENDING MESSAGES
-    def send_all(self, sock, msg):
-        fullmsg = struct.pack("!i", len(msg)) + msg.encode()
-        sock.sendall(fullmsg)
-    
-
-    # FOR RECEIVING MESSAGES
-    def receive(self, sock):
-        length = struct.unpack("!i", self.recv_all(sock, 4))[0]
-        message = self.recv_all(sock, length).decode()
-        return message
-    
-
-    # HELPER METHOD
-    def recv_all(self, sock, length):
-        data=""
-
-        while len(data) < length:
-            more = sock.recv(length - len(data)).decode()
-
-            if not more:
-                raise EOFError("Socket closed %d bytes into a %d-byte message" %(len(data), length))
-            data += more
-        
-        return data.encode()
-
-
-    def handle_client(self, client_socket, addr):
-        i = -1
-        username = None
+    def handle_auth(self, client_socket, addr):
         while True:
-            i += 1
-            self.logger.debug(f"Iteration {i}")
-
+            self.logger.debug(f"In while in handle_auth()...")
             try:
                 msg = self.receive(client_socket)
                 action = msg.split("|")[0]
@@ -99,10 +74,8 @@ class Server:
                         break
                     elif username == None:
                         continue
-                    else: # if username == False
-                        if client_socket in self.clients:
-                            self.clients.remove(client_socket)
-                        client_socket.close()
+                    else:#if username == False
+                        self.cleanup_client(client_socket)
                         break
 
                 elif action == "LISTEN":
@@ -111,62 +84,20 @@ class Server:
 
 
             except Exception as e:
-                self.logger.error(f"Exception in handle_client(): {e}")
-                if client_socket in self.clients:
-                    self.clients.remove(client_socket)
-                client_socket.close()
+                self.logger.error(f"Exception in handle_auth(): {e}")
+                self.cleanup_client(client_socket)
                 break
 
 
-
-            # try:
-            #     msg = self.receive(client_socket).strip()
-            #     action = msg.split("|")[0]
-            #     self.logger.debug(f"Client chose: {action}")
-                
-            #     if action == 'REGISTER':
-            #         self.register(client_socket)
-            #         continue
-
-            #     elif action == 'LOGIN':
-            #         username = self.login(client_socket, msg)
-
-            #         if username == False:
-            #             self.logger.debug("login() returned 'False'\n")
-            #             if client_socket in self.clients:
-            #                 self.clients.remove(client_socket)
-            #             client_socket.close()
-            #             break
-
-            #         elif username:
-            #             self.on_login_success(username, client_socket)
-            #         else:
-            #             continue
-
-            # except Exception as e:
-            #     self.logger.error(f"Error handling client {addr}: {e}")
-            #     if client_socket in self.clients:
-            #         self.clients.remove(client_socket)
-            #     client_socket.close()
-            #     break
-
-
     def on_login_success(self, username, client_socket):
-        rooms = ''
-        for room_name, room in self.rooms.items():
-            if username in room.participants:
-                rooms += f"|{room_name}"
-        self.logger.debug(f"Sending rooms ({rooms}) to user...")
-        self.send_all(client_socket, rooms)
-
-        self.logger.debug("Entering while True...")
         while True:
-            msg = self.receive(client_socket)
+            msg = self.receive(client_socket).split("|")
             self.logger.debug(f"Received msg from client: {msg}")
-            msg = msg.split("|")
             action = msg[0]
-            self.logger.debug(f"Action chosen is {action}")
-            if action == "SELECT_ROOM":
+            if action == "SEND_ROOMS":
+                self.send_rooms(username, client_socket)
+
+            elif action == "SELECT_ROOM":
                 room_name = msg[1]
                 if (username not in self.rooms[room_name].participants) and room_name != "Broadcast":
                     self.send_all(client_socket, "Access Denied!")
@@ -190,13 +121,15 @@ class Server:
                 break
             
             elif action == "CREATE_ROOM":
-                self.create_room(username, client_socket)
+                self.create_room(username, client_socket, msg)
 
 
-    def create_room(self, username, client_socket):
-        room_name = self.receive(client_socket)
+    def create_room(self, username, client_socket, msg):
+        room_name = msg[1]
         self.logger.debug(f"Received room_name: {room_name} from client and now creating room...")
-        self.rooms[room_name] = Room(room_name)
+        if room_name not in self.rooms:
+            self.rooms[room_name] = Room(room_name, [username])
+            self.logger.debug("Room created successfully.")
 
         # self.logger.debug("Creating registered-users_str...")
         # registered_users_str = ''
@@ -237,6 +170,46 @@ class Server:
         serialized_messages = pickle.dumps(self.rooms[room_name].messages)
         client_socket.sendall(serialized_messages)
         return
+    
+
+    def login(self, client_socket, msg, addr):
+        try:
+            msg = msg.split("|")
+            username = msg[1]
+            password = msg[2]
+            self.logger.debug(f"Client entered username: {username}, and password: {password}")
+
+            if ((not username) or (not password)):
+                self.send_all(client_socket, "Login failed. Username and Password are required fields!\n")
+                self.logger.debug("Login failed. Username and Password are required fields!\n")
+                return None
+            
+            elif username not in self.registered_users:
+                self.send_all(client_socket, "Login failed. User not found!\n")
+                self.logger.debug("Login failed. User not found!\n")
+                return None
+
+            if self.registered_users[username].password == password:
+                if username not in self.logged_in_users:
+                    self.logged_in_users[username] = User(username, password, socket=client_socket, address=addr)
+                    self.send_all(client_socket, "Login successful!\n")
+                    self.logger.debug("Login successful!\n")
+                    return username
+                
+                else:
+                    self.send_all(client_socket, "Login failed. User is already logged in.\n")
+                    self.logger.debug("Login failed. User already logged in.\n")
+                    return None
+                
+            else:
+                self.send_all(client_socket, "Login failed. Username and Password don't match.\n")
+                self.logger.debug("Login failed. Username and Password don't match.\n")
+                return None
+
+        except Exception as e:
+            self.send_all(client_socket, "Login failed. Ran into exception server-side!")
+            self.logger.error(f"Ran into Exception during login(): {e}")
+            return False
 
 
     def register(self, client_socket, msg, addr):
@@ -247,66 +220,19 @@ class Server:
             self.logger.debug(f"Client entered new username: {username}, and new password: {password}")
 
             if ((not username) or (not password)):
-                self.logger.debug("Location 6")
-                self.send_all(client_socket, "Login failed.\n")
-                self.logger.debug("Login failed.")
+                self.send_all(client_socket, "Login failed. Username and Password are required fields!\n")
+                self.logger.debug("Login failed. Username and Password are required fields!\n")
                 return None
 
-            else:
-                self.logger.debug("Location 7")
-                if username not in self.registered_users:
-                    self.registered_users[username] = User(username, password, socket=client_socket, address=addr)
-                    self.send_all(client_socket, "Registration successful!\n")
-                    self.logger.debug("Registration successful!")
-                    return username
+            if username not in self.registered_users:
+                self.registered_users[username] = User(username, password, socket=client_socket, address=addr)
+                self.send_all(client_socket, "Registration successful!\n")
+                self.logger.debug("Registration successful!\n")
+                return username
 
         except Exception as e:
-            self.send_all(client_socket, "Ran into exception server-side!")
-            self.logger.error(f"Ran into Exception: {e}")
-            self.logger.debug("Location 8")
-            return False
-
-
-    def login(self, client_socket, msg, addr):
-        try:
-            msg = msg.split("|")
-            username = msg[1]
-            password = msg[2]
-            self.logger.debug(f"Client entered username: {username}, and password: {password}")
-
-            if ((not username) or (not password)) or (username not in self.registered_users):
-                self.logger.debug("Location 1")
-                self.send_all(client_socket, "Login failed.\n")
-                self.logger.debug("Login failed.")
-                return None
-
-            if self.registered_users[username].password == password:
-                self.logger.debug("Location 2")
-                if username not in self.logged_in_users:
-                    self.logged_in_users[username] = User(username, password, socket=client_socket, address=addr)
-                    self.send_all(client_socket, "Login successful!\n")
-                    self.logger.debug("Login successful!")
-
-                    return username
-                
-                else:
-                    self.logger.debug("Location 3")
-                    self.send_all(client_socket, "Login failed. User is already logged in.\n")
-                    self.logger.debug("Login failed. User already logged in.")
-
-                    return None
-                
-            else:
-                self.logger.debug("Location 4")
-                self.send_all(client_socket, "Login failed. Username and Password don't match.\n")
-                self.logger.debug("Login failed. Username and Password don't match.")
-
-                return None
-
-        except Exception as e:
-            self.send_all(client_socket, "Ran into exception server-side!")
-            self.logger.error(f"Ran into Exception: {e}")
-            self.logger.debug("Location 5")
+            self.send_all(client_socket, "Registration failed. Ran into exception server-side!")
+            self.logger.error(f"Ran into Exception during register(): {e}")
             return False
 
 
@@ -337,10 +263,48 @@ class Server:
         self.cleanup_client(client_socket)
 
 
+    def send_rooms(self, username, client_socket):
+        rooms = ''
+        for room_name, room in self.rooms.items():
+            if username in room.participants:
+                rooms += f"|{room_name}"
+        
+        rooms = rooms.strip("|")
+        self.logger.debug(f"Sending rooms ({rooms}) to user...")
+        self.send_all(client_socket, rooms)
+
+
     def cleanup_client(self, client_socket):
         if client_socket in self.clients:
             self.clients.remove(client_socket)
         client_socket.close()
+
+
+    # FOR SENDING MESSAGES
+    def send_all(self, sock, msg):
+        fullmsg = struct.pack("!i", len(msg)) + msg.encode()
+        sock.sendall(fullmsg)
+    
+
+    # FOR RECEIVING MESSAGES
+    def receive(self, sock):
+        length = struct.unpack("!i", self.recv_all(sock, 4))[0]
+        message = self.recv_all(sock, length).decode()
+        return message
+    
+
+    # HELPER METHOD
+    def recv_all(self, sock, length):
+        data=""
+
+        while len(data) < length:
+            more = sock.recv(length - len(data)).decode()
+
+            if not more:
+                raise EOFError("Socket closed %d bytes into a %d-byte message" %(len(data), length))
+            data += more
+        
+        return data.encode()
 
 
 if __name__ == "__main__":

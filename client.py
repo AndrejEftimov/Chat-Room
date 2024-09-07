@@ -24,82 +24,81 @@ class Client:
     listening_socket = None
     server_host = '127.0.0.1'
     server_port = 5555
+    view = 'auth' #default is auth
 
     def __init__(self):
         logger.debug("Running __init__()...")
 
-        self.rooms = ["Broadcast"] # rooms joined (names of rooms)
+        st.title("Socket-based Chat Application")
 
+        self.manage_socket()
+        self.manage_view()
+        self.manage_messages()
+        self.manage_rooms()
+        self.activate_view()
+
+
+    def manage_socket(self):
         if 'client_socket' not in st.session_state:
             st.session_state['client_socket'] = self.create_socket()
         self.client_socket = st.session_state['client_socket']
 
-        st.title("Socket-based Chat Application")
 
+    def manage_view(self):
+        if 'view' not in st.session_state:
+            self.set_view('auth')
+        self.view = self.get_view()
+
+
+    def is_logged_in(self):
         if 'logged_in' not in st.session_state:
             st.session_state['logged_in'] = False
             st.session_state['username'] = ""
-
-        if not st.session_state['logged_in']:
-            logger.debug("Entering auth_view()...")
-            self.auth_view()
+        
+        if 'user' not in st.session_state:
+            st.session_state['user'] = None
         else:
-            if 'messages' not in st.session_state:
-                st.session_state['messages'] = []
-
-            if 'new_messages' not in st.session_state:
-                st.session_state['new_messages'] = False
-
-            if 'current_room' not in st.session_state:
-                st.session_state['current_room'] = 'Broadcast'
-
             self.user = st.session_state['user']
 
-            if 'got_rooms' not in st.session_state:
-                st.session_state['got_rooms'] = False
-
-            logger.debug("Entering chat_view()...")
-            self.chat_view()
-
-
-    # FOR SENDING MESSAGES
-    def send_all(self, sock, msg):
-        fullmsg = struct.pack("!i", len(msg)) + msg.encode()
-        sock.sendall(fullmsg)
-
-
-    # FOR RECEIVING MESSAGES
-    def receive(self, sock):
-        length = struct.unpack("!i", self.recv_all(sock, 4))[0]
-        message = self.recv_all(sock, length).decode()
-        return message
-    
-
-    # HELPER METHOD
-    def recv_all(self, sock, length):
-        data=""
-
-        while len(data) < length:
-            more = sock.recv(length - len(data)).decode()
-
-            if not more:
-                raise EOFError("Socket closed %d bytes into a %d-byte message" %(len(data), length))
-            data += more
+        if not st.session_state['logged_in']:
+            return None
         
-        return data.encode()
+        return st.session_state['username']
     
 
-    # CREATE AND RETURN A SOCKET
-    def create_socket(self):
-        logger.debug("Creating socket...")
-        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            client_socket.connect((self.server_host, self.server_port))
-            return client_socket
-        except ConnectionRefusedError:
-            st.error("Server is not available. Please start the server and try again.")
-            logger.error("Server is not available. Please start the server and try again.")
-            exit()
+    def manage_messages(self):
+        if 'messages' not in st.session_state:
+            st.session_state['messages'] = []
+
+        if 'new_messages' not in st.session_state:
+            st.session_state['new_messages'] = False
+
+
+    def manage_rooms(self):
+        if 'rooms' not in st.session_state:
+            st.session_state['rooms'] = ["Broadcast"]
+        self.rooms = st.session_state['rooms']
+
+        if 'current_room' not in st.session_state:
+            st.session_state['current_room'] = 'Broadcast'
+
+        if 'got_rooms' not in st.session_state:
+            st.session_state['got_rooms'] = False
+    
+
+    def activate_view(self):
+        if 'view' not in st.session_state:
+            self.set_view('auth')
+
+        self.view = self.get_view()
+
+        match self.view:
+            case 'auth':
+                self.auth_view()
+            case 'chat':
+                self.chat_view()
+            case 'create_room':
+                self.create_room_view()
     
 
     def auth_view(self):
@@ -114,74 +113,44 @@ class Client:
 
 
     def chat_view(self):
-
-        if st.session_state['got_rooms'] == False:
-            logger.debug("Receiving rooms from server...")
-            self.rooms += self.receive(self.client_socket).split("|")
-            st.session_state['got_rooms'] = True
-            logger.debug(f"Received rooms from server: {self.rooms}")
-
         create_room_btn = st.button("Create Room", key="create_room_btn")
         if create_room_btn:
-            self.create_room_view()
-        else:
-            st.sidebar.title("Chat Rooms")
-
-            room_choice = st.sidebar.selectbox("Choose a room", self.rooms, index=self.rooms.index(st.session_state['current_room']))
-            if room_choice:
-                update_thread = threading.Thread(target=self.listen_for_updates)
-                update_thread.start()
-
-                logout_btn = st.button("Logout", key="logout_btn")
-                if logout_btn:
-                    self.logout()
-
-                st.subheader(f"{room_choice} Room:")
-
-                self.send_all(self.client_socket, f"SELECT_ROOM|{room_choice}")
-                logger.debug(f"Sent action: SELECT_ROOM|{room_choice}")
-
-                response = self.receive(self.client_socket)
-                if "SUCCESSFULLY" not in response:
-                    st.error("Access Denied!")
-
-                else:
-                    st.session_state['current_room'] = room_choice
-                    st.success("Successfully joined room!")
-                    room_messages = self.get_room_messages(room_choice)
-                    room = Room(room_choice)
-                    room.messages = room_messages
-
-                    st.session_state['new_messages'] = False
-
-                    with st.chat_message("user"):
-                        for message in room_messages:
-                            st.markdown(f"**{message.author_name}** ({message.timestamp.strftime("%c")}): {message.text}")
-
-                logger.debug(f"Received response after selecting Room: {response}")
-
-            input = st.chat_input("Type your message:", key='new_message')
-
-            if input:
-                self.send_message(room_choice, input)
-                st.rerun()
-
-            time.sleep(1)
+            self.set_view('create_room')
             st.rerun()
+
+        logout_btn = st.button("Logout", key="logout_btn")
+        if logout_btn:
+            self.logout()
+
+        st.sidebar.title("Chat Rooms")
+
+        refresh_rooms_btn = st.sidebar.button("Refresh Rooms", key="refresh_rooms_btn")
+        if refresh_rooms_btn:
+            self.get_rooms(force=True)
+
+        room_choice = st.sidebar.selectbox("Choose a room", self.rooms, index=self.rooms.index(st.session_state['current_room']))
+        if room_choice:
+            self.select_render_room(room_choice)
+
+        input = st.chat_input("Type your message:", key='new_message')
+
+        if input:
+            self.send_message(room_choice, input)
+            st.rerun()
+
+        time.sleep(1)
+        st.rerun()
 
 
     def create_room_view(self):
-        self.send_all(self.client_socket, f"CREATE_ROOM")
-        logger.debug("Sent CREATE_ROOM command to server.")
-
         room_name = st.text_input("Room Name")
-        submitted = st.button("Create")
+        submitted = st.button("Create", key="create_room_submit_btn")
         if submitted:
-            self.send_all(self.client_socket, room_name)
-            logger.debug(f"Sent room_name: {room_name} to server and now running st.rerun()...")
-            # st.rerun()
-        else:
-            st.stop()
+            logger.debug(f"Sending 'CREATE_ROOM' and room_name to server...")
+            self.send_all(self.client_socket, f"CREATE_ROOM|{room_name}")
+            logger.debug(f"CREATE_ROOM and room_name sent.")
+            self.set_view('chat')
+            st.rerun()
 
 
         # self.send_all(self.client_socket, f"CREATE_ROOM")
@@ -253,7 +222,7 @@ class Client:
     def send_message(self, room_name, input):
         msg = f"SEND_MESSAGE|{room_name}|{input}"
         self.send_all(self.client_socket, msg)
-        logger.debug("Message sent.")
+        logger.debug(f"Message sent: {msg}")
 
         response = self.receive(self.client_socket)
         logger.debug(f"Received response after sending Message: {response}")
@@ -283,8 +252,8 @@ class Client:
                     logger.debug(f"Getting response from server...")
                     response = self.receive(self.client_socket)
                 except Exception as e:
-                    logger.error(f"Exception: {e}")
-                    self.client_socket.close()
+                    logger.error(f"Exception in login(): {e}")
+                    self.cleanup_client_socket()
                     st.rerun()
 
                 if "successful" in response:
@@ -293,6 +262,7 @@ class Client:
                     st.session_state['logged_in'] = True
                     st.session_state['username'] = username
                     st.session_state['user'] = self.user
+                    self.set_view('chat')
 
                 else:
                     logger.debug(f"Server responded with failed: {response}")
@@ -318,14 +288,14 @@ class Client:
                     response = self.receive(self.client_socket)
                 except Exception as e:
                     logger.error(f"Exception: {e}")
-                    self.client_socket.close()
+                    self.cleanup_client_socket()
                     st.rerun()
 
                 if "successful" in response:
                     logger.debug(f"Server responded with successful: {response}")
 
                 elif "failed" in response:
-                    self.client_socket.close()
+                    logger.debug(f"Server responded with failed: {response}")
 
                 st.rerun()
 
@@ -340,14 +310,110 @@ class Client:
         
         # close old socket and create a new one
         self.client_socket.close()
-        if self.listening_socket:
-            self.listening_socket.close()
-        self.client_socket = self.create_socket()
+
+        self.manage_socket()
 
         st.session_state['logged_in'] = False
         st.session_state['username'] = ""
+        st.session_state['user'] = None
+
+        self.set_view('auth')
 
         st.rerun()
+
+
+    def set_view(self, view):
+        st.session_state['view'] = view
+
+
+    def get_view(self):
+        return st.session_state['view']
+
+
+    def select_render_room(self, room_name):
+        st.subheader(f"{room_name} Room:")
+
+        self.send_all(self.client_socket, f"SELECT_ROOM|{room_name}")
+        logger.debug(f"Sent action: SELECT_ROOM|{room_name}")
+
+        response = self.receive(self.client_socket)
+        if "SUCCESSFULLY" not in response:
+            st.error("Access Denied!")
+
+        else:
+            st.session_state['current_room'] = room_name
+            st.success("Successfully joined room!")
+            room_messages = self.get_room_messages(room_name)
+            room = Room(room_name)
+            room.messages = room_messages
+
+            st.session_state['new_messages'] = False
+
+            with st.chat_message("user"):
+                for message in room_messages:
+                    st.markdown(f"**{message.author_name}** ({message.timestamp.strftime("%c")}): {message.text}")
+
+        logger.debug(f"Received response after selecting Room: {response}")
+
+
+    def get_rooms(self, force=False):
+        if (st.session_state['got_rooms'] == False) or (force == True):
+            try:
+                self.send_all(self.client_socket, "SEND_ROOMS")
+                logger.debug("Receiving rooms from server...")
+                self.rooms += self.receive(self.client_socket).split("|")
+                st.session_state['rooms'] = self.rooms
+                st.session_state['got_rooms'] = True
+                logger.debug(f"Received rooms from server: {self.rooms}")
+            except Exception as e:
+                logger.debug(f"Exception in chat _view(): {e}")
+                self.cleanup_client_socket()
+                self.set_view('auth')
+                st.rerun()
+
+    # CREATE AND RETURN A SOCKET
+    def create_socket(self):
+        logger.debug("Creating socket...")
+        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            client_socket.connect((self.server_host, self.server_port))
+            return client_socket
+        except ConnectionRefusedError:
+            st.error("Server is not available. Please start the server and try again.")
+            logger.error("Server is not available. Please start the server and try again.")
+            exit()
+
+
+    def cleanup_client_socket(self):
+        self.client_socket.close()
+        self.client_socket = self.create_socket()
+
+
+    # FOR SENDING MESSAGES
+    def send_all(self, sock, msg):
+        fullmsg = struct.pack("!i", len(msg)) + msg.encode()
+        sock.sendall(fullmsg)
+
+
+    # FOR RECEIVING MESSAGES
+    def receive(self, sock):
+        length = struct.unpack("!i", self.recv_all(sock, 4))[0]
+        message = self.recv_all(sock, length).decode()
+        return message
+    
+
+    # HELPER METHOD
+    def recv_all(self, sock, length):
+        data=""
+
+        while len(data) < length:
+            more = sock.recv(length - len(data)).decode()
+
+            if not more:
+                raise EOFError("Socket closed %d bytes into a %d-byte message" %(len(data), length))
+            data += more
+        
+        return data.encode()
 
 
 if __name__ == "__main__":
