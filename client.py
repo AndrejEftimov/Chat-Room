@@ -84,6 +84,9 @@ class Client:
 
         if 'got_rooms' not in st.session_state:
             st.session_state['got_rooms'] = False
+
+        if 'received_registered_users' not in st.session_state:
+            st.session_state['received_registered_users'] = False
     
 
     def activate_view(self):
@@ -99,6 +102,8 @@ class Client:
                 self.chat_view()
             case 'create_room':
                 self.create_room_view()
+            case 'add_participants':
+                self.add_participants_view()
     
 
     def auth_view(self):
@@ -113,12 +118,22 @@ class Client:
 
 
     def chat_view(self):
-        create_room_btn = st.button("Create Room", key="create_room_btn")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.session_state['current_room'] != "Broadcast":
+                add_participants_btn = st.button("Add Participants", key="add_participants_btn")
+                if add_participants_btn:
+                    self.set_view('add_participants')
+                    st.rerun()
+
+        with col2:
+            create_room_btn = st.button("Create Room", key="create_room_btn")
         if create_room_btn:
             self.set_view('create_room')
             st.rerun()
-
-        logout_btn = st.button("Logout", key="logout_btn")
+        
+        with col3:
+            logout_btn = st.button("Logout", key="logout_btn")
         if logout_btn:
             self.logout()
 
@@ -138,7 +153,7 @@ class Client:
             self.send_message(room_choice, input)
             st.rerun()
 
-        time.sleep(1)
+        time.sleep(0.9)
         st.rerun()
 
 
@@ -151,6 +166,28 @@ class Client:
             logger.debug(f"CREATE_ROOM and room_name sent.")
             self.set_view('chat')
             st.rerun()
+
+
+    def add_participants_view(self):
+        if st.session_state['received_registered_users'] == False:
+            self.send_all(self.client_socket, f"ADD_PARTICIPANTS|{st.session_state['current_room']}")
+            registered_users = self.receive(self.client_socket).split("|")
+            st.session_state['received_registered_users'] = True
+            logger.debug(f"Received registered_users from server: {registered_users}")
+
+        st.subheader(f"Add Participants to Room: {st.session_state['current_room']}")
+
+        participants = st.multiselect("Add Users", registered_users)
+
+        submitted = st.button("Add Participants")
+        if submitted:
+            participants = '|'.join(participants)
+            self.send_all(self.client_socket, participants)
+            logger.debug(f"Sent participants to server: {participants}")
+
+
+
+            st.session_state['received_registered_users'] = False
 
 
         # self.send_all(self.client_socket, f"CREATE_ROOM")
@@ -230,7 +267,7 @@ class Client:
     
 
     def get_room_messages(self, room_name):
-        serialized_messages = self.client_socket.recv(1024)
+        serialized_messages = self.client_socket.recv(2048)
         messages = pickle.loads(serialized_messages)
         return messages
 
@@ -331,7 +368,7 @@ class Client:
 
 
     def select_render_room(self, room_name):
-        st.subheader(f"{room_name} Room:")
+        st.subheader(f"Room: {room_name}")
 
         self.send_all(self.client_socket, f"SELECT_ROOM|{room_name}")
         logger.debug(f"Sent action: SELECT_ROOM|{room_name}")
@@ -361,7 +398,7 @@ class Client:
             try:
                 self.send_all(self.client_socket, "SEND_ROOMS")
                 logger.debug("Receiving rooms from server...")
-                self.rooms += self.receive(self.client_socket).split("|")
+                self.rooms = self.receive(self.client_socket).split("|")
                 st.session_state['rooms'] = self.rooms
                 st.session_state['got_rooms'] = True
                 logger.debug(f"Received rooms from server: {self.rooms}")

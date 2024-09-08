@@ -85,43 +85,61 @@ class Server:
 
             except Exception as e:
                 self.logger.error(f"Exception in handle_auth(): {e}")
-                self.cleanup_client(client_socket)
-                break
+                # self.cleanup_client(client_socket)
+                # break
 
 
     def on_login_success(self, username, client_socket):
         while True:
-            msg = self.receive(client_socket).split("|")
-            self.logger.debug(f"Received msg from client: {msg}")
-            action = msg[0]
-            if action == "SEND_ROOMS":
-                self.send_rooms(username, client_socket)
+            try:
+                msg = self.receive(client_socket).split("|")
+                self.logger.debug(f"Received msg from client: {msg}")
+                action = msg[0]
+                if action == "SEND_ROOMS":
+                    self.send_rooms(username, client_socket)
 
-            elif action == "SELECT_ROOM":
-                room_name = msg[1]
-                if (username not in self.rooms[room_name].participants) and room_name != "Broadcast":
-                    self.send_all(client_socket, "Access Denied!")
-                    continue
+                elif action == "SELECT_ROOM":
+                    self.select_room(client_socket, username, msg)
 
-                self.logger.debug("Sending SUCCESSFULLY JOINED ROOM to client...")
-                self.send_all(client_socket, "SUCCESSFULLY JOINED ROOM!")
-                self.send_room_messages(client_socket, username, room_name)
+                elif action == "SEND_MESSAGE":
+                    self.send_message(client_socket, username, msg)
 
-            elif action == "SEND_MESSAGE":
-                room_name = msg[1]
-                message = msg[2]
-                self.logger.debug(f"Room name is '{room_name}', and message is '{message}'")
+                elif action == "LOGOUT":
+                    self.logout(username, client_socket)
+                    break
                 
-                if self.send_message_to_room(username, room_name, message):
-                    self.logger.debug("Sending SUCCESSFULLY SENT MESSAGE to client...")
-                    self.send_all(client_socket, "SUCCESSFULLY SENT MESSAGE!")
+                elif action == "CREATE_ROOM":
+                    self.create_room(username, client_socket, msg)
 
-            elif action == "LOGOUT":
-                self.logout(username, client_socket)
-                break
+                elif action == "ADD_PARTICIPANTS":
+                    self.add_participants(username, client_socket, msg)
+                    
+            except Exception as e:
+                self.logger.error(f"Exception in on_login_success(): {e}")
+
+
+    def select_room(self, client_socket, username, msg):
+        room_name = msg[1]
+        if (username not in self.rooms[room_name].participants) and room_name != "Broadcast":
+            self.send_all(client_socket, "Access Denied!")
+            return
+
+        self.logger.debug("Sending SUCCESSFULLY JOINED ROOM to client...\n")
+        self.send_all(client_socket, "SUCCESSFULLY JOINED ROOM!")
+        self.send_room_messages(client_socket, username, room_name)
+
+
+    def send_message(self, client_socket, username, msg):
+        try:
+            room_name = msg[1]
+            message = msg[2]
+            self.logger.debug(f"Room name is '{room_name}', and message is '{message}'")
             
-            elif action == "CREATE_ROOM":
-                self.create_room(username, client_socket, msg)
+            if self.send_message_to_room(username, room_name, message):
+                self.logger.debug("Sending SUCCESSFULLY SENT MESSAGE to client...")
+                self.send_all(client_socket, "SUCCESSFULLY SENT MESSAGE!")
+        except Exception as e:
+            self.logger.error(f"Exception in send_message(): {e}")
 
 
     def create_room(self, username, client_socket, msg):
@@ -129,23 +147,25 @@ class Server:
         self.logger.debug(f"Received room_name: {room_name} from client and now creating room...")
         if room_name not in self.rooms:
             self.rooms[room_name] = Room(room_name, [username])
-            self.logger.debug("Room created successfully.")
+            self.logger.debug("Room created successfully.\n")
 
-        # self.logger.debug("Creating registered-users_str...")
-        # registered_users_str = ''
-        # for user in self.registered_users.keys():
-        #     registered_users_str += f'|{user}'
+
+    def add_participants(self, username, client_socket, msg):
+        room_name = msg[1]
+
+        registered_users = self.registered_users
+        for participant in self.rooms[room_name].participants:
+            registered_users.pop(participant)
+        registered_users.pop(username)
+
+        registered_users_str = "|".join(registered_users)
+        self.send_all(client_socket, registered_users_str)
+
+        new_participants = self.receive(client_socket).split("|")
+        self.logger.debug(f"Received new participants from user: {new_participants}")
         
-        # self.logger.debug(f"Sending registered_users_str {registered_users_str} to client...")
-        # self.send_all(client_socket, registered_users_str)
-        # msg = self.receive(client_socket).split("|")
-        # room_name = msg[0]
-        # users = msg[1].split("|")
-        # self.logger.debug(f"Received room_name: {room_name} and users: {users}")
-
-        # if room_name not in self.rooms:
-        #     self.rooms[room_name] = Room(room_name, users)
-            
+        
+        
             
     def send_message_to_room(self, author_username, room_name, message):
         if not self.rooms[room_name]:
@@ -159,7 +179,8 @@ class Server:
 
         for username in self.rooms[room_name].participants:
             if username in self.logged_in_users:
-                self.send_all(self.logged_in_users[username].listening_socket, f"UPDATE|{room_name}|{author_username}|{message}")
+                pass
+                # self.send_all(self.logged_in_users[username].listening_socket, f"UPDATE|{room_name}|{author_username}|{message}")
                 # serialized_message = pickle.dumps(messageObj)
                 # self.logged_in_users[username].socket.sendall(serialized_message)
 
@@ -264,14 +285,18 @@ class Server:
 
 
     def send_rooms(self, username, client_socket):
-        rooms = ''
-        for room_name, room in self.rooms.items():
-            if username in room.participants:
-                rooms += f"|{room_name}"
-        
-        rooms = rooms.strip("|")
-        self.logger.debug(f"Sending rooms ({rooms}) to user...")
-        self.send_all(client_socket, rooms)
+        try:
+            rooms = ''
+            for room_name, room in self.rooms.items():
+                if (username in room.participants) or (room_name == "Broadcast"):
+                    rooms += f"|{room_name}"
+            
+            rooms = rooms.strip("|")
+            self.logger.debug(f"Sending rooms ({rooms}) to user...")
+            self.send_all(client_socket, rooms)
+
+        except Exception as e:
+            self.logger.error(f"Exception in send_rooms(): {e}")
 
 
     def cleanup_client(self, client_socket):
