@@ -3,6 +3,7 @@ import socket
 import struct
 import threading
 import logging
+import traceback
 from user import User
 from room import Room
 from message import Message
@@ -84,9 +85,10 @@ class Server:
 
 
             except Exception as e:
-                self.logger.error(f"Exception in handle_auth(): {e}")
-                # self.cleanup_client(client_socket)
-                # break
+                self.logger.error("Exception in handle_auth():")
+                self.logger.exception(e)
+                self.cleanup_client(client_socket)
+                break
 
 
     def on_login_success(self, username, client_socket):
@@ -115,7 +117,10 @@ class Server:
                     self.add_participants(username, client_socket, msg)
                     
             except Exception as e:
-                self.logger.error(f"Exception in on_login_success(): {e}")
+                self.logger.error("Exception in on_login_success():")
+                traceback.print_exception(e)
+                self.cleanup_client(client_socket)
+                break
 
 
     def select_room(self, client_socket, username, msg):
@@ -138,6 +143,8 @@ class Server:
             if self.send_message_to_room(username, room_name, message):
                 self.logger.debug("Sending SUCCESSFULLY SENT MESSAGE to client...")
                 self.send_all(client_socket, "SUCCESSFULLY SENT MESSAGE!")
+
+                
         except Exception as e:
             self.logger.error(f"Exception in send_message(): {e}")
 
@@ -151,19 +158,24 @@ class Server:
 
 
     def add_participants(self, username, client_socket, msg):
-        room_name = msg[1]
+        try:
+            room_name = msg[1]
 
-        registered_users = self.registered_users
-        for participant in self.rooms[room_name].participants:
-            registered_users.pop(participant)
-        registered_users.pop(username)
+            registered_users = self.registered_users
+            for participant in self.rooms[room_name].participants:
+                registered_users.pop(participant)
 
-        registered_users_str = "|".join(registered_users)
-        self.send_all(client_socket, registered_users_str)
+            registered_users_str = "|".join(registered_users)
+            self.send_all(client_socket, registered_users_str)
 
-        new_participants = self.receive(client_socket).split("|")
-        self.logger.debug(f"Received new participants from user: {new_participants}")
-        
+            new_participants = self.receive(client_socket).split("|")
+            self.logger.debug(f"Received new participants from user: {new_participants}")
+
+            for participant in new_participants:
+                self.rooms[room_name].participants.append(participant)
+
+        except Exception as e:
+            self.logger.error(f"Exception in add_participants(): {e}")
         
         
             
