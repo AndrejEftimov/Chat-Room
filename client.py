@@ -57,7 +57,7 @@ class ChatClient(QWidget):
         
         toolbar_layout = QHBoxLayout()
         self.room_selector = QComboBox()
-        self.refresh_rooms_button = QPushButton("Refresh Rooms")
+        self.refresh_rooms_button = QPushButton("Refresh") # refresh rooms and messages
         self.create_room_button = QPushButton("Create Room")
         self.add_participants_button = QPushButton("Add Participants")
         self.logout_button = QPushButton("Logout")
@@ -182,6 +182,7 @@ class ChatClient(QWidget):
 
     def get_rooms(self, force=False):
         try:
+            logger.debug(f"IN GET ROOMS ROOM NAME IS {self.current_room}\n")
             self.send_all(self.client_socket, "SEND_ROOMS")
             logger.debug("Receiving rooms from server...")
             self.rooms = self.receive(self.client_socket).split("|")
@@ -193,10 +194,11 @@ class ChatClient(QWidget):
             self.show_auth_view()
 
     def update_room_selector(self):
+        current_room = self.current_room
         self.room_selector.clear()
-        self.room_selector.addItems(self.rooms)
-        if self.current_room in self.rooms:
-            self.room_selector.setCurrentText(self.current_room)
+        self.room_selector.addItems(self.rooms) # prebrishuva self.current_room
+        if current_room in self.rooms:
+            self.room_selector.setCurrentText(current_room)
 
     def select_render_room(self, room_name):
         if not room_name:

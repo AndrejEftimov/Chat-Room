@@ -42,6 +42,7 @@ class Server:
         self.registered_users = {
             "andrej": User("andrej", "123", None),
             "ivona": User("ivona", "123", None),
+            "demijan": User("demijan", "123", None),
         }
 
         self.logged_in_users = {}  # dictionary to keep track of logged-in users, username: User
@@ -87,7 +88,7 @@ class Server:
             except Exception as e:
                 self.logger.error("Exception in handle_auth():")
                 self.logger.exception(e)
-                self.cleanup_client(client_socket)
+                self.logout(username, client_socket)
                 break
 
 
@@ -119,7 +120,7 @@ class Server:
             except Exception as e:
                 self.logger.error("Exception in on_login_success():")
                 traceback.print_exception(e)
-                self.cleanup_client(client_socket)
+                self.logout(username, client_socket)
                 break
 
 
@@ -290,8 +291,9 @@ class Server:
         client_socket.send(f"Logout successful!".encode())
         self.broadcast(f"{username} has left the chat.")
 
-        with self.lock:
-            self.logged_in_users.pop(username)
+        if username:
+            with self.lock:
+                self.logged_in_users.pop(username)
 
         self.cleanup_client(client_socket)
 
