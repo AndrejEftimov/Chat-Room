@@ -132,9 +132,37 @@ class ChatClient(QWidget):
             self.user = User(username, password, self.client_socket)
             self.show_chat_view()
             self.get_rooms()
+            threading.Thread(target=self.listen).start()
         else:
             logger.debug(f"Server responded with failed: {response}")
             self.show_error("Login failed. Please check your credentials.")
+
+    def listen(self):
+        self.listening_socket = self.create_socket()
+        self.send_all(self.listening_socket, f"LISTEN|{self.user.username}")
+        response = self.receive(self.listening_socket)
+        logger.debug(f"Server response in listen(): {response}")
+
+        if "SUCCESSFULLY" not in response:
+            self.listening_socket.close()
+            self.logout()
+            return
+        
+        while True:
+            msg = self.receive(self.listening_socket).split("|")
+            if msg[0] != "UPDATE":
+                continue
+
+            room_name = msg[1]
+            if room_name != self.current_room:
+                continue
+
+            author_username = msg[2]
+            message = msg[3]
+            messageObj = Message(room_name, author_username, message)
+            messages = [messageObj]
+
+            self.update_chat_display(messages, clear=False)
 
     def register(self):
         username = self.username_input.text()
@@ -221,8 +249,9 @@ class ChatClient(QWidget):
         messages = pickle.loads(serialized_messages)
         return messages
 
-    def update_chat_display(self, messages):
-        self.chat_display.clear()
+    def update_chat_display(self, messages, clear=True):
+        if clear == True:
+            self.chat_display.clear()
         for message in messages:
             self.chat_display.append(f"<b>{message.author_name}</b> ({message.timestamp.strftime('%c')}): {message.text}")
 

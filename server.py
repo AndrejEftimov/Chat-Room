@@ -46,6 +46,9 @@ class Server:
             "demijan": User("demijan", "123", None),
         }
 
+        for username in self.registered_users.keys():
+            self.rooms["Broadcast"].participants.append(username)
+
         self.logged_in_users = {}  # dictionary to keep track of logged-in users, username: User
 
 
@@ -84,6 +87,8 @@ class Server:
                 elif action == "LISTEN":
                     username = msg.split("|")[1]
                     self.logged_in_users[username].listening_socket = client_socket
+                    self.send_all(client_socket, "SUCCESSFULLY added listening_socket!")
+                    break
 
 
             except Exception as e:
@@ -203,8 +208,7 @@ class Server:
 
         for username in self.rooms[room_name].participants:
             if username in self.logged_in_users:
-                pass
-                # self.send_all(self.logged_in_users[username].listening_socket, f"UPDATE|{room_name}|{author_username}|{message}")
+                self.send_all(self.logged_in_users[username].listening_socket, f"UPDATE|{room_name}|{author_username}|{message}")
                 # serialized_message = pickle.dumps(messageObj)
                 # self.logged_in_users[username].socket.sendall(serialized_message)
 
@@ -270,7 +274,8 @@ class Server:
                 return None
 
             if username not in self.registered_users:
-                self.registered_users[username] = User(username, password, socket=client_socket, address=addr)
+                self.registered_users[username] = User(username, password, socket=None, address=addr)
+                self.rooms["Broadcast"].participants.append(username)
                 self.send_all(client_socket, "Registration successful!\n")
                 self.logger.debug("Registration successful!\n")
                 return username
