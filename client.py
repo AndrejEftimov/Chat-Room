@@ -264,6 +264,9 @@ class ChatClient(QWidget):
         if ok and participants:
             self.send_all(self.client_socket, participants)
             logger.debug(f"Sent participants to server: {participants}")
+        else:
+            self.send_all(self.client_socket, "")
+        
 
     def cleanup_client_socket(self):
         self.client_socket.close()

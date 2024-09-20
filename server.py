@@ -9,6 +9,7 @@ from room import Room
 from message import Message
 import json
 import pickle
+import copy
 
 class Server:
 
@@ -161,19 +162,29 @@ class Server:
     def add_participants(self, username, client_socket, msg):
         try:
             room_name = msg[1]
+            self.logger.debug(f"In add_participants(), self.registered_users = {self.registered_users}")
 
-            registered_users = self.registered_users
+            registered_users = list(self.registered_users.keys())
+
             for participant in self.rooms[room_name].participants:
-                registered_users.pop(participant)
+                self.logger.debug(f"IN FOR LOOP, participant = {participant}")
+                registered_users.remove(participant)
+
+            self.logger.debug(f"FINISHED FOR LOOP")
 
             registered_users_str = "|".join(registered_users)
             self.send_all(client_socket, registered_users_str)
 
-            new_participants = self.receive(client_socket).split("|")
+            new_participants = self.receive(client_socket)
+            if not new_participants or new_participants == '':
+                return
+            
+            new_participants = new_participants.split("|")
             self.logger.debug(f"Received new participants from user: {new_participants}")
 
-            for participant in new_participants:
-                self.rooms[room_name].participants.append(participant)
+            if new_participants:
+                for participant in new_participants:
+                    self.rooms[room_name].participants.append(participant)
 
         except Exception as e:
             self.logger.error(f"Exception in add_participants(): {e}")
